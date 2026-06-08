@@ -1,0 +1,46 @@
+# Arduino build artifacts
+*.elf
+*.eep
+*.lst
+*.map
+*.sym
+*.lss
+
+# Compiled binaries (keep .hex and .bin in compiled/ for distribution)
+# but ignore temporary build files
+build/
+.build/
+*.tmp
+
+# Arduino CLI cache
+.arduino/
+.cli-config.yml
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS files
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Backup files
+*.bak
+*.backup
+compiled/*.bak
+compiled/*.backup
+
+# Log files
+*.log
+
+# Python (if using any build scripts)
+__pycache__/
+*.pyc
+*.pyo
+
+# Node (if using any tools)
+node_modules/

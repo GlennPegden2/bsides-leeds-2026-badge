@@ -1,3 +1,8 @@
+// BSides Leeds 2026 Badge Firmware
+// Customization settings are in config.h
+
+#include "config.h"
+
 #include <avr/io.h>
 #include <avr/sleep.h>
 #include <avr/pgmspace.h>
@@ -65,6 +70,25 @@ uint8_t state;
 
 uint16_t randomState = 0xACE1u;
 
+// Konami Code easter egg: UP UP DOWN DOWN LEFT RIGHT LEFT RIGHT B A
+// Mapped to: L-Blue, L-Blue, L-Green, L-Green, L-Blue, R-Blue, L-Blue, R-Blue, L-Red, R-Red
+static const uint8_t KONAMI_LENGTH = 10;
+static const uint8_t KONAMI_CODE[] PROGMEM = {
+  LEFT_BLUE_MASK,    // UP
+  LEFT_BLUE_MASK,    // UP
+  LEFT_GREEN_MASK,   // DOWN
+  LEFT_GREEN_MASK,   // DOWN
+  LEFT_BLUE_MASK,    // LEFT
+  RIGHT_BLUE_MASK,   // RIGHT
+  LEFT_BLUE_MASK,    // LEFT
+  RIGHT_BLUE_MASK,   // RIGHT
+  LEFT_RED_MASK,     // B
+  RIGHT_RED_MASK     // A
+};
+
+uint8_t konamiBuffer[KONAMI_LENGTH];
+uint8_t lastPressedMask = 0;
+
 void seedGameRandom()
 {
   randomState ^= (uint16_t)millis();
@@ -108,6 +132,97 @@ uint8_t randomLedIndex()
 uint8_t randomEight()
 {
   return nextRandomByte() & 0x07;
+}
+
+uint8_t getTimerMinutes()
+{
+  uint8_t timerIndex = (state >> 3) & 0x07;
+  if (timerIndex > 5) timerIndex = 1;
+  return (timerIndex + 1) * 5;
+}
+
+void cycleTimerDuration()
+{
+  uint8_t timerIndex = (state >> 3) & 0x07;
+  timerIndex = (timerIndex + 1) % 6;
+  state = (state & 0x07) | (timerIndex << 3);
+  EEPROM.update(0, state);
+}
+
+void showTimerDuration()
+{
+  const uint8_t minutes = getTimerMinutes();
+  const uint8_t flashes = minutes / 5;
+  
+  for (uint8_t i = 0; i < flashes; ++i) {
+    setAllLeds(0, 20, 20, true);
+    delay(200);
+    setAllLeds(COLOR_OFF, true);
+    delay(200);
+  }
+  delay(500);
+}
+
+bool checkKonamiCode()
+{
+  for (uint8_t i = 0; i < KONAMI_LENGTH; ++i) {
+    if (konamiBuffer[i] != pgm_read_byte(&KONAMI_CODE[i])) {
+      return false;
+    }
+  }
+  return true;
+}
+
+void unlockAllGames()
+{
+  state = state & 0xF8;
+  EEPROM.update(0, state);
+  
+  for (uint8_t flash = 0; flash < 3; ++flash) {
+    setAllLeds(30, 0, 30, true);
+    delay(150);
+    setAllLeds(COLOR_OFF, true);
+    delay(150);
+  }
+  
+  for (uint8_t cycle = 0; cycle < 15; ++cycle) {
+    setLeftEye(30, 0, 0);
+    setRightEye(0, 0, 30);
+    ledStrip.show();
+    delay(120);
+    setLeftEye(0, 0, 30);
+    setRightEye(30, 0, 0);
+    ledStrip.show();
+    delay(120);
+  }
+  
+  setAllLeds(0, 30, 0, true);
+  delay(500);
+  setAllLeds(COLOR_OFF, true);
+}
+
+void recordButtonPress(uint8_t buttonMask)
+{
+  for (uint8_t i = 0; i < KONAMI_LENGTH - 1; ++i) {
+    konamiBuffer[i] = konamiBuffer[i + 1];
+  }
+  konamiBuffer[KONAMI_LENGTH - 1] = buttonMask;
+  
+  if (checkKonamiCode()) {
+    unlockAllGames();
+  }
+}
+
+void checkForKonamiCode()
+{
+  const uint8_t currentMask = getPressedTouchMask();
+  const uint8_t newPresses = currentMask & ~lastPressedMask;
+  
+  if (newPresses != 0) {
+    recordButtonPress(newPresses);
+  }
+  
+  lastPressedMask = currentMask;
 }
 
 
@@ -1204,7 +1319,7 @@ uint8_t timer(uint16_t step)
   uint16_t multiplier = 63; // tweak for timing accuracy
 
   const uint8_t eyeLedCount = 9;
-  const uint8_t totalMinutes = 9;
+  const uint8_t totalMinutes = getTimerMinutes();
 
   const uint16_t preFlashSteps = 3000 / frameMs;      // 3 seconds
   const uint16_t halfSecondSteps = 500 / frameMs;     // 0.5 seconds
@@ -1277,21 +1392,31 @@ int runAnimationMode(uint8_t mode, uint16_t step)
     case 4:
       return loopingEyes(step, 10, 0, 0);
     case 5:
+      #if !UNLOCK_ALL_MODES
       if ((state & B00000111) != 0) { return 0; };
+      #endif
       return devsecopsMode(step);
     case 6:
+      #if !UNLOCK_ALL_MODES
       if ((state & B00000010) != 0) { return 0; };
+      #endif
       return nuclearMode(step, 3, 0, 0, 0, 10, 20, 0, 150 );
     case 7:
+      #if !UNLOCK_ALL_MODES
       if ((state & B00000100) != 0) { return 0; };
+      #endif
       return nuclearMode(4, 3, 12, 20, 255, 0, 2, 0, 250 ); // york rose
     case 8:
+      #if !UNLOCK_ALL_MODES
       if ((state & B00000001) != 0) { return 0; };
+      #endif
       return policeMode(step);
     case 9:
       return spinMode(step, 1, 0, 3, 0,0,3,75);
     case 10:
       return timer(step);
+    case 11:
+      return nuclearMode(4, 3, 30, 0, 0, 30, 30, 30, 250); // lancashire rose - red & white
     default:
       return -1;
   }
@@ -1343,6 +1468,10 @@ void handleWakeButtonPress(
       case RIGHT_GREEN_MASK:
         playFollowTheSequenceTwoPlayer();
         break;
+      case LEFT_BLUE_MASK | RIGHT_BLUE_MASK:
+        cycleTimerDuration();
+        showTimerDuration();
+        break;
     }
   }
 
@@ -1393,6 +1522,7 @@ void loop()
 
     while (intervalMs > 0) {
       showTouchedPads();
+      checkForKonamiCode();
       delay(TOUCH_POLL_MS);
       intervalMs -= TOUCH_POLL_MS;
 
